@@ -2,6 +2,7 @@ from contextlib import asynccontextmanager
 from typing import Annotated
 
 from fastapi import Depends, FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import URL
 from sqlmodel import Session, SQLModel, create_engine, select
 
@@ -37,7 +38,13 @@ def get_session():
 SessionDep = Annotated[Session, Depends(get_session)]
 
 app = FastAPI(lifespan=lifespan)
-
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 @app.get("/")
 def read_root():
@@ -49,6 +56,10 @@ def read_stickers(session: SessionDep) -> list[Sticker]:
     stickers = session.scalars(select(Sticker)).all()
     return stickers
 
+@app.get("/stickers/geojson")
+def read_stickers_geojson(session: SessionDep) -> dict:
+    stickers = session.scalars(select(Sticker)).all()
+    return {"type": "geojson", "data": {"type": "FeatureCollection", "features": [sticker.to_geojson() for sticker in stickers]}}
 
 @app.post("/stickers/")
 def create_item(sticker: Sticker, session: SessionDep):

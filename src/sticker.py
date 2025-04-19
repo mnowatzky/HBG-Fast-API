@@ -10,3 +10,19 @@ class Sticker(SQLModel, table=True):
     city: str = Field(default=None, index=True)
     state: str = Field(default=None, index=True)
     country: str = Field(default=None, index=True)
+
+    def to_geojson(self) -> dict:
+        return {
+            "type": "Feature",
+            "geometry": {
+                "type": "Point",
+                "coordinates": [self.longitude, self.latitude],
+            },
+            "properties": {
+                "name": self.name,
+                "date": self.date.isoformat() if self.date else None,
+                "city": self.city,
+                "state": self.state,
+                "country": self.country,
+            },
+        }
