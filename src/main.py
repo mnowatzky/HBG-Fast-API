@@ -3,6 +3,7 @@ from typing import Annotated
 
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from sqlalchemy import URL
 from sqlmodel import Session, SQLModel, create_engine, select
 
@@ -51,17 +52,15 @@ def read_root():
     return {"Hello": "World"}
 
 
-@app.get("/stickers/")
-def read_stickers(session: SessionDep) -> list[Sticker]:
-    stickers = session.scalars(select(Sticker)).all()
-    return stickers
+@app.get("/stickers")
+def read_stickers_geojson(session: SessionDep, format: str | None = None) -> JSONResponse:
+    stickers = session.scalars(select(Sticker).order_by(Sticker.date.asc())).all()
+    if format == "geojson":
+        return {"type": "geojson", "data": {"type": "FeatureCollection", "features": [sticker.to_geojson() for sticker in stickers]}}
+    else:
+        return stickers
 
-@app.get("/stickers/geojson")
-def read_stickers_geojson(session: SessionDep) -> dict:
-    stickers = session.scalars(select(Sticker)).all()
-    return {"type": "geojson", "data": {"type": "FeatureCollection", "features": [sticker.to_geojson() for sticker in stickers]}}
-
-@app.post("/stickers/")
+@app.post("/stickers")
 def create_item(sticker: Sticker, session: SessionDep):
     session.add(sticker)
     session.commit()

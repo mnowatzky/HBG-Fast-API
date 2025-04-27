@@ -24,5 +24,6 @@ class Sticker(SQLModel, table=True):
                 "city": self.city,
                 "state": self.state,
                 "country": self.country,
+                "id": self.id,
             },
         }
