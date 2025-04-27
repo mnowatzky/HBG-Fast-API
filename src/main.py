@@ -60,6 +60,7 @@ def read_stickers_geojson(session: SessionDep, format: str | None = None) -> JSO
     else:
         return stickers
 
+
 @app.post("/stickers")
 def create_item(sticker: Sticker, session: SessionDep):
     session.add(sticker)
