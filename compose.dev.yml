@@ -1,0 +1,13 @@
+# Builds both images from source, with HBG-Frontend checked out next to this repository:
+#   docker compose -f docker-compose.yml -f compose.dev.yml up -d --build
+# The image names keep local builds from replacing a pulled maltenow/*:latest.
+services:
+  sticker-api:
+    image: sticker-api:dev
+    build: .
+    ports:
+      - "127.0.0.1:8000:8000"
+
+  frontend:
+    image: hbg-frontend:dev
+    build: ../HBG-Frontend

@@ -1,3 +1,8 @@
+# Production. TLS and routing are handled by your reverse proxy, which reaches the
+# frontend as hbg-frontend:80 over a shared external Docker network.
+# Only the frontend publishes a port, on loopback, for checks through an SSH tunnel.
+name: stickers
+
 services:
   sticker-db:
     # Pinned because the data directory is tied to this major version and to the
@@ -5,9 +10,9 @@ services:
     image: postgres:17-bookworm
     restart: unless-stopped
     environment:
-      POSTGRES_USER: ${STICKER_DB_USER}
-      POSTGRES_PASSWORD: ${STICKER_DB_PASSWORD}
-      POSTGRES_DB: ${STICKER_DB_NAME}
+      POSTGRES_USER: ${STICKER_DB_USER:?set STICKER_DB_USER}
+      POSTGRES_PASSWORD: ${STICKER_DB_PASSWORD:?set STICKER_DB_PASSWORD}
+      POSTGRES_DB: ${STICKER_DB_NAME:?set STICKER_DB_NAME}
     volumes:
       - ./data:/var/lib/postgresql/data
     networks:
@@ -19,28 +24,38 @@ services:
       retries: 10
 
   sticker-api:
-    image: maltenow/sticker-api:latest
+    image: maltenow/sticker-api:${API_TAG:-latest}
     restart: unless-stopped
     env_file: .env
     environment:
       # Proxies on these networks may set the client IP for the rate limit. Not
       # "*", as uvicorn would then believe a X-Forwarded-For sent by the client.
       FORWARDED_ALLOW_IPS: "127.0.0.1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
-    build:
-      context: .
-      dockerfile: Dockerfile
-    ports:
-      - "127.0.0.1:8000:8000"
     networks:
       - db
-      - hbg
+      - app
     depends_on:
       sticker-db:
+        condition: service_healthy
+
+  frontend:
+    image: maltenow/hbg-frontend:${FRONTEND_TAG:-latest}
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:80"
+    networks:
+      app: {}
+      proxy:
+        aliases:
+          - hbg-frontend
+    depends_on:
+      sticker-api:
         condition: service_healthy
 
 networks:
   db:
     internal: true
-  # Shared with the compose project of HBG-Frontend.
-  hbg:
-    name: hbg
+  app: {}
+  proxy:
+    external: true
+    name: ${PROXY_NETWORK:?set PROXY_NETWORK to the Docker network of your reverse proxy}
