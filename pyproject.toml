@@ -3,6 +3,7 @@ name = "hbg-fast-api"
 version = "0.1.0"
 description = "API to add and view HBG stickers placed around the world"
 readme = "README.md"
+license = "MIT"
 requires-python = ">=3.12"
 dependencies = [
     "alembic>=1.20.1",

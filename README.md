@@ -139,3 +139,7 @@ git commit -am "Release 0.2.0"
 git tag -a v0.2.0 -m "Release 0.2.0"
 git push --follow-tags
 ```
+
+## License
+
+[MIT](LICENSE)
