@@ -1,22 +1,46 @@
 services:
   sticker-db:
-    image: postgres:latest
+    # Pinned because the data directory is tied to this major version and to the
+    # collations of this Debian release. postgres:latest would refuse to start.
+    image: postgres:17-bookworm
+    restart: unless-stopped
     environment:
       POSTGRES_USER: ${STICKER_DB_USER}
       POSTGRES_PASSWORD: ${STICKER_DB_PASSWORD}
       POSTGRES_DB: ${STICKER_DB_NAME}
-    ports:
-      - "5432:5432"
     volumes:
       - ./data:/var/lib/postgresql/data
+    networks:
+      - db
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
   sticker-api:
-    image: sticker-api:latest
+    image: maltenow/sticker-api:latest
+    restart: unless-stopped
     env_file: .env
+    environment:
+      # Proxies on these networks may set the client IP for the rate limit. Not
+      # "*", as uvicorn would then believe a X-Forwarded-For sent by the client.
+      FORWARDED_ALLOW_IPS: "127.0.0.1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
     build:
       context: .
       dockerfile: Dockerfile
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
+    networks:
+      - db
+      - hbg
     depends_on:
-      - sticker-db
+      sticker-db:
+        condition: service_healthy
+
+networks:
+  db:
+    internal: true
+  # Shared with the compose project of HBG-Frontend.
+  hbg:
+    name: hbg

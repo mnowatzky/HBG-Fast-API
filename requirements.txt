@@ -1,4 +1,0 @@
-fastapi[standard]
-sqlmodel
-geoalchemy2
-psycopg2-binary
