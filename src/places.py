@@ -23,6 +23,7 @@ def timezone_at(latitude: float, longitude: float, known: Collection[str]) -> st
 
 # The old site stored Nominatim's country names in each visitor's language.
 LEGACY_COUNTRIES = {
+    "AL": ("Albanien", ["Albania"]),
     "AT": ("Österreich", ["Austria"]),
     "AU": ("Australien", ["Australia"]),
     "BE": ("Belgien", ["Belgium"]),
@@ -47,6 +48,7 @@ LEGACY_COUNTRIES = {
     "IE": ("Irland", ["Ireland"]),
     "IT": ("Italien", ["Italy"]),
     "JP": ("Japan", []),
+    "KG": ("Kirgisistan", ["Kyrgyzstan"]),
     "KR": ("Südkorea", ["South Korea"]),
     "MC": ("Monaco", []),
     "MT": ("Malta", []),
