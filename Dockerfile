@@ -1,4 +1,4 @@
-FROM python:3.12-slim-bookworm AS build
+FROM python:3.15-slim-bookworm AS build
 
 RUN pip install --no-cache-dir uv==0.13.5
 
@@ -9,7 +9,7 @@ COPY pyproject.toml uv.lock ./
 RUN uv sync --locked --no-dev --no-install-project --no-cache
 
 
-FROM python:3.12-slim-bookworm
+FROM python:3.15-slim-bookworm
 
 RUN useradd --system --no-create-home app
 
