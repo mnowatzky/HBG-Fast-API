@@ -2,8 +2,10 @@ from datetime import datetime
 
 import pytest
 from conftest import RATE_LIMIT
+from limits import parse_many
 from sqlalchemy.exc import OperationalError
 
+from config import DotEnvConfig
 from main import app, get_session
 from sticker import Sticker
 
@@ -85,6 +87,15 @@ def test_create_is_rate_limited_per_client(client):
 
     assert client.post("/stickers", json=HAMBURG).status_code == 429
     assert client.get("/stickers").status_code == 200
+
+
+def test_default_rate_limit_has_a_minute_and_a_day_window():
+    default = DotEnvConfig.model_fields["sticker_create_rate_limit"].default
+
+    assert [limit.GRANULARITY.name for limit in parse_many(default)] == [
+        "minute",
+        "day",
+    ]
 
 
 def test_list_returns_full_stickers_newest_first(client, session):

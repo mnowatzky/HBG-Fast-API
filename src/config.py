@@ -17,7 +17,7 @@ class DotEnvConfig(BaseSettings):
     # Path prefix the proxy strips before forwarding, used for the /docs links.
     sticker_root_path: str = ""
     # Per client IP, in `limits` notation. The write endpoint has no login.
-    sticker_create_rate_limit: str = "30/minute"
+    sticker_create_rate_limit: str = "5/minute;50/day"
 
     @property
     def db_url(self) -> URL:
@@ -31,4 +31,4 @@ class DotEnvConfig(BaseSettings):
         )
 
 
-config = DotEnvConfig()  # type: ignore
+config = DotEnvConfig()

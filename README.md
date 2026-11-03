@@ -22,7 +22,7 @@ The browser reaches the API on the site's own origin below `/api`, so no CORS is
 
 - `X-Total-Count` on `GET /stickers` holds the number of matching stickers across all pages.
 - `name` matches one whole person, case-insensitively: `Timo` finds `Lisa & Timo` but not `Timon`.
-- `POST /stickers` takes `latitude`, `longitude` and `name` (up to 75 characters), plus optional `city`, `state` and `country`. It needs no login and is limited to 30 requests per minute for each client IP.
+- `POST /stickers` takes `latitude`, `longitude` and `name` (up to 75 characters), plus optional `city`, `state` and `country`. It needs no login and is limited to 5 requests per minute and 50 per day for each client IP. There is no endpoint to delete stickers, see [Removing spam](#removing-spam).
 
 ## Running it
 
@@ -43,7 +43,7 @@ docker compose up -d --no-build --wait
 curl http://127.0.0.1:8080/api/health
 ```
 
-Point a proxy host for your domain at `hbg-frontend:80` and enable TLS there. The proxy must add the client's address to `X-Forwarded-For`, or all visitors share one rate limit.
+Point a proxy host for your domain at `hbg-frontend:80` and enable TLS there. The proxy must add the client's address to `X-Forwarded-For`, or all visitors share one rate limit. Turn off its access log, as the frontend's privacy policy (`/datenschutz`) says no visit is logged; in Nginx Proxy Manager, put `access_log off;` in the proxy host's Advanced tab.
 
 Migrations run when the API starts. Only the frontend publishes a port, on `127.0.0.1:8080`, for checks through an SSH tunnel.
 
@@ -58,7 +58,7 @@ Migrations run when the API starts. Only the frontend publishes a port, on `127.
 | `STICKER_DB_HOST`, `STICKER_DB_PORT`, `STICKER_DB_TYPE` | Where the API finds the database. Keep the values from the example. |
 | `STICKER_ROOT_PATH` | Path the proxy serves the API below, used for the links in `/docs`. `/api` in this stack. |
 | `STICKER_CORS_ORIGINS` | Other origins allowed to call the API, as a JSON list. Default: none. |
-| `STICKER_CREATE_RATE_LIMIT` | New stickers per client IP. Default: `30/minute`. |
+| `STICKER_CREATE_RATE_LIMIT` | New stickers per client IP, in [`limits` notation](https://limits.readthedocs.io/en/stable/quickstart.html#rate-limit-string-notation). Default: `5/minute;50/day`. |
 
 ### Updates and rollback
 
@@ -87,6 +87,15 @@ gunzip -c sticker-YYYY-MM-DD.sql.gz \
 ```
 
 `postgres` is pinned to major version 17 because the data directory is tied to it. Moving to a newer major version takes a dump and restore.
+
+### Removing spam
+
+Back up first. List the stickers by id, or everything saved since a UTC time, then run the same command again with `--yes` to delete them:
+
+```sh
+docker compose exec sticker-api python src/delete_stickers.py --since "2026-11-05 14:00"
+docker compose exec sticker-api python src/delete_stickers.py 2801 2802 --yes
+```
 
 ### Moving from the old MySQL site
 

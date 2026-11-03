@@ -75,7 +75,7 @@ def import_stickers(session: Session, stickers: list[Sticker], replace: bool) ->
         raise ValueError(
             f"the table already has {existing} stickers, use --replace to delete them"
         )
-    session.exec(delete(Sticker))  # type: ignore
+    session.exec(delete(Sticker))
     session.add_all(stickers)
     session.flush()
     # The ids come from the file, so the sequence has to catch up with them.
