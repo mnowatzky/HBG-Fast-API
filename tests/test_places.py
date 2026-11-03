@@ -32,6 +32,7 @@ def test_timezone_falls_back_to_the_nautical_zone_if_postgres_lacks_it():
         ("Deutschland", ("DE", "Deutschland")),
         ("Germany", ("DE", "Deutschland")),
         ("norja", ("NO", "Norwegen")),
+        ("Kirgisistan", ("KG", "Kirgisistan")),
         (" Czechia ", ("CZ", "Tschechien")),
         ("Atlantis", ("", "Atlantis")),
         ("", ("", "")),
