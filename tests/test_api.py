@@ -1,29 +1,36 @@
-from datetime import datetime
+from datetime import UTC, datetime
 
 import pytest
 from conftest import RATE_LIMIT
+from limits import parse_many
 from sqlalchemy.exc import OperationalError
 
-from main import app, get_session
+from config import DotEnvConfig
+from db import get_session
+from geocode import Address
+from main import app
 from sticker import Sticker
 
-HAMBURG = {
-    "latitude": 53.55,
-    "longitude": 9.99,
-    "name": "Malte",
-    "city": "Hamburg",
-    "state": "Hamburg",
-    "country": "Deutschland",
-}
+HAMBURG = {"latitude": 53.55, "longitude": 9.99, "name": "Malte"}
 
 
-def add_stickers(session, *names):
+def add_stickers(session, *names, **fields):
     """Oldest first, one day apart."""
     for day, name in enumerate(names, start=1):
         session.add(
-            Sticker(latitude=1, longitude=2, name=name, date=datetime(2024, 1, day))
+            Sticker(
+                latitude=1,
+                longitude=2,
+                name=name,
+                date=datetime(2024, 1, day),
+                **fields,
+            )
         )
     session.commit()
+
+
+def names(response):
+    return [sticker["name"] for sticker in response.json()]
 
 
 def test_create_returns_the_stored_sticker(client):
@@ -33,7 +40,28 @@ def test_create_returns_the_stored_sticker(client):
     body = response.json()
     assert body["id"] == 1
     assert body["name"] == "Malte"
+    assert body["people"] == ["Malte"]
     assert datetime.fromisoformat(body["date"]).year >= 2026
+
+
+def test_create_adds_the_address_and_the_time_zone_of_the_place(client, geocoder):
+    body = client.post(
+        "/stickers", json={"latitude": 13.75, "longitude": 100.5, "name": "Timo"}
+    ).json()
+
+    assert geocoder.places == [(13.75, 100.5)]
+    assert body["city"] == "Hamburg"
+    assert body["country_code"] == "DE"
+    assert body["timezone"] == "Asia/Bangkok"
+
+
+def test_create_ignores_a_client_supplied_address(client):
+    body = client.post(
+        "/stickers", json={**HAMBURG, "city": "Atlantis", "country": "Germany"}
+    ).json()
+
+    assert body["city"] == "Hamburg"
+    assert body["country"] == "Deutschland"
 
 
 def test_create_ignores_a_client_supplied_date_and_id(client):
@@ -45,13 +73,16 @@ def test_create_ignores_a_client_supplied_date_and_id(client):
     assert not body["date"].startswith("2099")
 
 
-def test_create_accepts_a_sticker_without_an_address(client):
+def test_create_saves_a_sticker_without_an_address(client, geocoder):
+    geocoder.address = Address()
+
     response = client.post(
-        "/stickers", json={"latitude": 0, "longitude": 0, "name": "Auf See"}
+        "/stickers", json={"latitude": 0, "longitude": -30, "name": "Auf See"}
     )
 
     assert response.status_code == 201
     assert response.json()["country"] == ""
+    assert response.json()["timezone"] == "Etc/GMT+2"
 
 
 def test_create_trims_the_name(client):
@@ -72,7 +103,6 @@ def test_create_trims_the_name(client):
         {"name": ""},
         {"name": "   "},
         {"name": "x" * 76},
-        {"city": "x" * 256},
     ],
 )
 def test_create_rejects_invalid_input(client, change):
@@ -87,16 +117,38 @@ def test_create_is_rate_limited_per_client(client):
     assert client.get("/stickers").status_code == 200
 
 
+def test_default_rate_limit_has_a_minute_and_a_day_window():
+    default = DotEnvConfig.model_fields["sticker_create_rate_limit"].default
+
+    assert [limit.GRANULARITY.name for limit in parse_many(default)] == [
+        "minute",
+        "day",
+    ]
+
+
 def test_list_returns_full_stickers_newest_first(client, session):
     add_stickers(session, "first", "second")
 
     response = client.get("/stickers")
 
     assert response.status_code == 200
-    assert [s["name"] for s in response.json()] == ["second", "first"]
+    assert names(response) == ["second", "first"]
     assert set(response.json()[0]) == {
         "id", "latitude", "longitude", "name", "date", "city", "state", "country",
+        "country_code", "timezone", "people",
     }  # fmt: skip
+
+
+def test_dates_are_sent_in_utc_with_the_offset(client, session):
+    add_stickers(session, "Malte")
+
+    assert client.get("/stickers").json()[0]["date"] == "2024-01-01T00:00:00Z"
+
+
+def test_people_are_split_like_the_name_filter_splits_them(client, session):
+    add_stickers(session, " Lisa &Timo & ")
+
+    assert client.get("/stickers").json()[0]["people"] == ["Lisa", "Timo"]
 
 
 def test_geojson_is_a_feature_collection_with_lng_lat_order(client, session):
@@ -149,10 +201,13 @@ def test_pages_are_contiguous_when_dates_tie(client, session):
     "params",
     [
         {"limit": 0},
-        {"limit": 501},
+        {"limit": 5001},
         {"offset": -1},
         {"format": "xml"},
         {"name": "x" * 76},
+        {"country": "DEU"},
+        {"since": "yesterday"},
+        {"time_of_day": "noon"},
     ],
 )
 def test_list_rejects_invalid_parameters(client, params):
@@ -164,7 +219,7 @@ def test_name_filter_matches_whole_names_in_shared_stickers(client, session):
 
     response = client.get("/stickers", params={"name": "Timo"})
 
-    assert [s["name"] for s in response.json()] == [
+    assert names(response) == [
         "timo", "Timo&Collin", "Lisa & Timo", "Timo",
     ]  # fmt: skip
     assert response.headers["x-total-count"] == "4"
@@ -181,10 +236,54 @@ def test_name_filter_ignores_stray_whitespace_in_legacy_names(client, session):
 def test_name_filter_treats_special_characters_literally(client, session):
     add_stickers(session, "Timo", "T.mo")
 
-    assert [
-        s["name"] for s in client.get("/stickers", params={"name": "T.mo"}).json()
-    ] == ["T.mo"]
+    assert names(client.get("/stickers", params={"name": "T.mo"})) == ["T.mo"]
     assert client.get("/stickers", params={"name": "%"}).json() == []
+
+
+def test_country_and_city_filters_ignore_case(client, session):
+    add_stickers(session, "Malte", city="Hamburg", country_code="DE")
+    add_stickers(session, "Timo", city="Wien", country_code="AT")
+
+    assert names(client.get("/stickers", params={"country": "de"})) == ["Malte"]
+    assert names(client.get("/stickers", params={"city": "WIEN"})) == ["Timo"]
+
+
+def test_since_includes_and_until_excludes_the_moment(client, session):
+    add_stickers(session, "1st", "2nd", "3rd")
+
+    params = {"since": "2024-01-02T00:00:00Z", "until": "2024-01-03T00:00:00"}
+
+    assert names(client.get("/stickers", params=params)) == ["2nd"]
+
+
+def test_since_respects_an_offset(client, session):
+    add_stickers(session, "1st", "2nd")
+
+    # Midnight in Berlin is 23:00 UTC the day before, when nothing was placed.
+    params = {"since": "2024-01-02T00:00:00+01:00"}
+
+    assert names(client.get("/stickers", params=params)) == ["2nd"]
+
+
+def test_time_of_day_is_local_where_the_sticker_is(client, session):
+    for name, hour, zone in [
+        # 23:30 in Bangkok
+        ("bangkok evening", 16, "Asia/Bangkok"),
+        # 06:30 in Bangkok the next day
+        ("bangkok morning", 23, "Asia/Bangkok"),
+        ("berlin night", 3, "Europe/Berlin"),
+    ]:
+        date = datetime(2024, 1, 1, hour, 30, tzinfo=UTC)
+        session.add(
+            Sticker(latitude=1, longitude=2, name=name, date=date, timezone=zone)
+        )
+    session.commit()
+
+    night = client.get("/stickers", params={"time_of_day": "night"})
+    day = client.get("/stickers", params={"time_of_day": "day"})
+
+    assert sorted(names(night)) == ["bangkok evening", "berlin night"]
+    assert names(day) == ["bangkok morning"]
 
 
 def test_large_responses_are_compressed(client, session):
@@ -217,9 +316,9 @@ def test_database_outage_answers_503_and_hides_connection_details(client):
 
     app.dependency_overrides[get_session] = session_without_database
     try:
-        for path in ["/health", "/stickers"]:
+        for path in ["/health", "/stickers", "/stats/summary"]:
             response = client.get(path)
             assert response.status_code == 503
             assert "secret" not in response.text
     finally:
-        app.dependency_overrides.clear()
+        del app.dependency_overrides[get_session]

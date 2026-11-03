@@ -28,6 +28,8 @@ os.environ.update(
     STICKER_ROOT_PATH="",
     STICKER_CORS_ORIGINS='["https://frontend.example"]',
     STICKER_CREATE_RATE_LIMIT=f"{RATE_LIMIT}/minute",
+    # Nothing listens there. Tests that need an address use FakeGeocoder.
+    STICKER_NOMINATIM_URL="http://127.0.0.1:9/reverse",
 )
 
 
@@ -61,11 +63,35 @@ def session(engine):
         yield session
 
 
+class FakeGeocoder:
+    """Answers every place with `address` and records the places it was asked."""
+
+    def __init__(self):
+        from geocode import Address
+
+        self.address = Address(
+            city="Hamburg", state="Hamburg", country="Deutschland", country_code="DE"
+        )
+        self.places = []
+
+    def reverse(self, latitude, longitude):
+        self.places.append((latitude, longitude))
+        return self.address
+
+
 @pytest.fixture
-def client(session):
+def geocoder():
+    return FakeGeocoder()
+
+
+@pytest.fixture
+def client(session, geocoder):
     from fastapi.testclient import TestClient
 
+    from geocode import get_geocoder
     from main import app, limiter
 
     limiter.reset()
-    return TestClient(app)
+    app.dependency_overrides[get_geocoder] = lambda: geocoder
+    yield TestClient(app)
+    app.dependency_overrides.clear()

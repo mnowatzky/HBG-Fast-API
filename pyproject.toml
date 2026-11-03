@@ -7,17 +7,20 @@ license = "MIT"
 requires-python = ">=3.12"
 dependencies = [
     "alembic>=1.20.1",
-    "fastapi[standard]>=0.134.0",
+    "fastapi>=0.134.0",
     "geojson>=3.2.0",
     "psycopg[binary]>=3.3.6",
     "pydantic-settings>=2.13.1",
     "slowapi>=0.1.10",
     "sqlalchemy>=2.0.47",
     "sqlmodel>=0.0.37",
+    "tzfpy>=2.1.1",
+    "uvicorn[standard]>=0.54.0",
 ]
 
 [dependency-groups]
 dev = [
+    "httpx2>=2.16.0",
     "pytest>=9.2.0",
     "ruff>=0.17.3",
     "testcontainers[postgres]>=4.15.0",

@@ -3,11 +3,21 @@
 # Only the frontend publishes a port, on loopback, for checks through an SSH tunnel.
 name: stickers
 
+# Caps each container's log at about 30 MB; recreating a container on deploy drops its log.
+# None of them logs visitor IPs: the API has no access log, and Apache in the frontend
+# only sees the address of the reverse proxy.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   sticker-db:
     # Pinned because the data directory is tied to this major version and to the
     # collations of this Debian release. postgres:latest would refuse to start.
     image: postgres:17-bookworm
+    logging: *logging
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${STICKER_DB_USER:?set STICKER_DB_USER}
@@ -25,6 +35,7 @@ services:
 
   sticker-api:
     image: maltenow/sticker-api:${API_TAG:-latest}
+    logging: *logging
     restart: unless-stopped
     env_file: .env
     environment:
@@ -40,6 +51,7 @@ services:
 
   frontend:
     image: maltenow/hbg-frontend:${FRONTEND_TAG:-latest}
+    logging: *logging
     restart: unless-stopped
     ports:
       - "127.0.0.1:8080:80"
