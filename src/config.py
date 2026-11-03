@@ -18,6 +18,9 @@ class DotEnvConfig(BaseSettings):
     sticker_root_path: str = ""
     # Per client IP, in `limits` notation. The write endpoint has no login.
     sticker_create_rate_limit: str = "5/minute;50/day"
+    # Reverse geocoding for new stickers. Nominatim asks heavy users for an email.
+    sticker_nominatim_url: str = "https://nominatim.openstreetmap.org/reverse"
+    sticker_nominatim_email: str = ""
 
     @property
     def db_url(self) -> URL:

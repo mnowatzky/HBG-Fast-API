@@ -10,26 +10,19 @@ from geojson import FeatureCollection
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
-from sqlalchemy import String, any_, func
-from sqlalchemy.dialects.postgresql import ARRAY
+from sqlalchemy import func
 from sqlalchemy.exc import OperationalError
-from sqlmodel import Session, col, create_engine, select
+from sqlmodel import col, select
 
+import stats
 from config import config
-from sticker import Sticker, StickerCreate
+from db import SessionDep
+from filters import FiltersDep
+from geocode import Nominatim, get_geocoder
+from places import known_timezones, timezone_at
+from sticker import Sticker, StickerCreate, StickerPublic
 
 logger = logging.getLogger("uvicorn.error")
-
-# Migrations create the schema, see README.md.
-engine = create_engine(config.db_url, pool_pre_ping=True)
-
-
-def get_session():
-    with Session(engine) as session:
-        yield session
-
-
-SessionDep = Annotated[Session, Depends(get_session)]
 
 
 class StickerFormat(StrEnum):
@@ -50,6 +43,7 @@ app.add_middleware(
     allow_headers=["Content-Type"],
     expose_headers=["X-Total-Count"],
 )
+app.include_router(stats.router)
 
 
 @app.exception_handler(OperationalError)
@@ -67,24 +61,26 @@ def read_health(session: SessionDep):
     return {"status": "ok"}
 
 
-@app.get("/stickers", response_model=list[Sticker])
+@app.get(
+    "/stickers",
+    response_model=list[StickerPublic],
+    responses={
+        200: {
+            "description": "With format=geojson, a FeatureCollection of points "
+            "with the id and the name.",
+            "content": {"application/geo+json": {}},
+        }
+    },
+)
 def read_stickers(
     session: SessionDep,
     response: Response,
+    filters: FiltersDep,
     format: StickerFormat = StickerFormat.json,
-    limit: Annotated[int, Query(ge=1, le=500)] = 100,
+    limit: Annotated[int, Query(ge=1, le=5000)] = 100,
     offset: Annotated[int, Query(ge=0)] = 0,
-    name: Annotated[str | None, Query(max_length=75)] = None,
 ):
     """Stickers newest first. X-Total-Count holds the count across all pages."""
-    filters = []
-    if name:
-        # Matches one person in a shared name like "Lisa & Collin".
-        names = func.regexp_split_to_array(
-            func.lower(func.trim(Sticker.name)), r"\s*&\s*", type_=ARRAY(String)
-        )
-        filters.append(func.lower(name.strip()) == any_(names))
-
     total = session.scalar(select(func.count()).select_from(Sticker).where(*filters))
     stmt = (
         select(Sticker)
@@ -107,10 +103,22 @@ def read_stickers(
     return stickers
 
 
-@app.post("/stickers", status_code=status.HTTP_201_CREATED, response_model=Sticker)
+@app.post(
+    "/stickers", status_code=status.HTTP_201_CREATED, response_model=StickerPublic
+)
 @limiter.limit(config.sticker_create_rate_limit)
-def create_sticker(request: Request, sticker: StickerCreate, session: SessionDep):
-    db_sticker = Sticker.model_validate(sticker)
+def create_sticker(
+    request: Request,
+    sticker: StickerCreate,
+    session: SessionDep,
+    geocoder: Annotated[Nominatim, Depends(get_geocoder)],
+):
+    """Saves a sticker. The server adds the date, the address and the time zone."""
+    address = geocoder.reverse(sticker.latitude, sticker.longitude)
+    zone = timezone_at(sticker.latitude, sticker.longitude, known_timezones(session))
+    db_sticker = Sticker.model_validate(
+        sticker, update={**address.model_dump(), "timezone": zone}
+    )
     session.add(db_sticker)
     session.commit()
     session.refresh(db_sticker)

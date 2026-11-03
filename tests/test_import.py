@@ -1,4 +1,5 @@
-from datetime import datetime
+from datetime import UTC, datetime
+from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy import func
@@ -24,10 +25,29 @@ def test_read_cleans_up_legacy_values(tmp_path):
     first, second = read_stickers(write_export(tmp_path, HEADER + ROWS))
 
     assert first.id == 60
-    assert first.date == datetime(2019, 4, 5, 13, 17, 34)
+    assert first.country_code == "CZ"
     assert second.city == "Ōsaka"
     assert second.state == ""
     assert second.country == ""
+    assert second.country_code == ""
+
+
+def test_read_converts_the_old_servers_time_to_utc(tmp_path):
+    path = write_export(tmp_path, HEADER + ROWS)
+
+    # Summer time in Berlin, UTC+2
+    assert read_stickers(path)[0].date == datetime(2019, 4, 5, 11, 17, 34, tzinfo=UTC)
+    assert read_stickers(path, ZoneInfo("UTC"))[0].date == datetime(
+        2019, 4, 5, 13, 17, 34, tzinfo=UTC
+    )
+
+
+def test_read_gives_legacy_country_names_a_code_and_the_german_name(tmp_path):
+    content = HEADER + "1;52.2;21.0;Timo;2024-01-01;Warschau;;Poland\n"
+
+    [sticker] = read_stickers(write_export(tmp_path, content))
+
+    assert (sticker.country_code, sticker.country) == ("PL", "Polen")
 
 
 @pytest.mark.parametrize("delimiter", [",", "\t"])
@@ -76,6 +96,15 @@ def test_import_keeps_ids_and_new_stickers_continue_after_them(
 
     assert created.status_code == 201
     assert created.json()["id"] == 2733
+
+
+def test_import_adds_the_time_zone_of_each_place(tmp_path, session):
+    import_stickers(
+        session, read_stickers(write_export(tmp_path, HEADER + ROWS)), False
+    )
+
+    zones = session.exec(select(Sticker.id, Sticker.timezone).order_by(Sticker.id))
+    assert zones.all() == [(60, "Europe/Prague"), (2732, "Asia/Tokyo")]
 
 
 def test_import_refuses_to_touch_existing_stickers_without_replace(tmp_path, session):

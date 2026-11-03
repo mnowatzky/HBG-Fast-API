@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from alembic import command
 from conftest import alembic_config
 from sqlalchemy import create_engine, inspect, text
@@ -53,3 +55,42 @@ def test_baseline_adopts_a_database_from_the_old_create_all(database_url):
     assert STRAY_COLUMN not in [c["name"] for c in inspector.get_columns("sticker")]
     with engine.connect() as connection:
         assert connection.scalar(text("SELECT name FROM sticker")) == "Malte"
+
+
+def test_time_zones_and_country_codes_fill_in_existing_stickers(database_url):
+    url = fresh_schema(database_url, "codes")
+    config = alembic_config(url)
+    command.upgrade(config, "0001")
+    engine = create_engine(url)
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                INSERT INTO sticker (latitude, longitude, name, date, city, state, country)
+                VALUES (13.75, 100.5, 'Timo', '2024-01-01 12:00', 'Bangkok', '', 'Thailand'),
+                       (53.55, 9.99, 'Malte', '2024-01-01 12:00', '', '', 'Germany'),
+                       (0, -30, 'Lisa', '2024-01-01 12:00', '', '', '')
+                """
+            )
+        )
+
+    command.upgrade(config, "head")
+
+    with engine.connect() as connection:
+        rows = connection.execute(
+            text(
+                "SELECT name, country_code, country, timezone, "
+                "date = '2024-01-01 12:00+00' FROM sticker ORDER BY id"
+            )
+        ).all()
+    assert rows == [
+        ("Timo", "TH", "Thailand", "Asia/Bangkok", True),
+        ("Malte", "DE", "Deutschland", "Europe/Berlin", True),
+        ("Lisa", "", "", "Etc/GMT+2", True),
+    ]
+
+    command.downgrade(config, "0001")
+    with engine.connect() as connection:
+        assert connection.scalar(text("SELECT date FROM sticker LIMIT 1")) == (
+            datetime(2024, 1, 1, 12)
+        )

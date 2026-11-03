@@ -15,6 +15,7 @@ from sqlalchemy import delete
 from sqlmodel import Session, col, create_engine, select
 
 from config import config
+from filters import as_utc
 from sticker import Sticker
 
 
@@ -27,7 +28,7 @@ def select_stickers(
     if ids:
         stmt = stmt.where(col(Sticker.id).in_(ids))
     if since is not None:
-        stmt = stmt.where(Sticker.date >= since)
+        stmt = stmt.where(Sticker.date >= as_utc(since))
     return list(session.exec(stmt).all())
 
 

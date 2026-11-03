@@ -15,14 +15,30 @@ The browser reaches the API on the site's own origin below `/api`, so no CORS is
 
 | Request | Purpose |
 | --- | --- |
-| `GET /stickers` | Stickers newest first. Takes `limit` (1-500, default 100), `offset`, `format=json\|geojson` and `name`. |
-| `POST /stickers` | Adds a sticker and returns it with status 201. The server assigns `id` and `date`. |
+| `GET /stickers` | Stickers newest first. Takes the filters below, `limit` (1-5000, default 100), `offset` and `format=json\|geojson`. |
+| `POST /stickers` | Adds a sticker and returns it with status 201. |
+| `GET /stats/summary` | The number of stickers, people, cities and countries. |
+| `GET /stats/counts?by=…` | Stickers per `person`, `country`, `city`, `month`, `weekday` or `hour`. Takes `limit`. |
+| `GET /stats/farthest?latitude=…&longitude=…` | The stickers farthest from a place, with `distance_km`. Takes `limit` (1-100, default 10). |
 | `GET /health` | 200 when the database is reachable, otherwise 503. |
 | `GET /docs` | Interactive documentation. |
 
+Every `GET /stickers` and `/stats` request takes the same filters:
+
+| Filter | Matches |
+| --- | --- |
+| `name` | One whole person, case-insensitively: `Timo` finds `Lisa & Timo` but not `Timon`. |
+| `country` | The ISO 3166-1 alpha-2 code, like `DE`. |
+| `city` | The city, case-insensitively. |
+| `since`, `until` | Placed at or after `since` and before `until`. Times without an offset are in UTC. |
+| `time_of_day` | `night` (22:00 to 5:59) or `day`, in local time where the sticker is. |
+
+For example, the people with the most stickers at night: `GET /stats/counts?by=person&time_of_day=night&limit=10`.
+
 - `X-Total-Count` on `GET /stickers` holds the number of matching stickers across all pages.
-- `name` matches one whole person, case-insensitively: `Timo` finds `Lisa & Timo` but not `Timon`.
-- `POST /stickers` takes `latitude`, `longitude` and `name` (up to 75 characters), plus optional `city`, `state` and `country`. It needs no login and is limited to 5 requests per minute and 50 per day for each client IP. There is no endpoint to delete stickers, see [Removing spam](#removing-spam).
+- `POST /stickers` takes `latitude`, `longitude` and `name` (up to 75 characters, several people separated by `&`). The server adds `id`, `date`, the time zone of the place, and the address in German from [Nominatim](https://nominatim.org/), which gets the coordinates. If Nominatim fails or finds nothing, as at sea, the address stays empty. The request needs no login and is limited to 5 per minute and 50 per day for each client IP. There is no endpoint to delete stickers, see [Removing spam](#removing-spam).
+- A sticker has `date` in UTC, `timezone` (an IANA name like `Europe/Berlin`), `city`, `state`, `country`, `country_code` and `people`, the names split at `&`.
+- `/stats/counts` lists people, countries and cities with the most stickers first, and times in their order: months as `2024-03`, weekdays from `1` for Monday to `7`, hours from `00` to `23`, all local where the sticker is. A `label` is the most common spelling of its `key`, like `Deutschland` for `DE`.
 
 ## Running it
 
@@ -59,6 +75,8 @@ Migrations run when the API starts. Only the frontend publishes a port, on `127.
 | `STICKER_ROOT_PATH` | Path the proxy serves the API below, used for the links in `/docs`. `/api` in this stack. |
 | `STICKER_CORS_ORIGINS` | Other origins allowed to call the API, as a JSON list. Default: none. |
 | `STICKER_CREATE_RATE_LIMIT` | New stickers per client IP, in [`limits` notation](https://limits.readthedocs.io/en/stable/quickstart.html#rate-limit-string-notation). Default: `5/minute;50/day`. |
+| `STICKER_NOMINATIM_EMAIL` | Sent to Nominatim with each request, as its [usage policy](https://operations.osmfoundation.org/policies/nominatim/) asks. Default: none. |
+| `STICKER_NOMINATIM_URL` | The reverse geocoding endpoint. Default: the public Nominatim. |
 
 ### Updates and rollback
 
@@ -102,13 +120,14 @@ docker compose exec sticker-api python src/delete_stickers.py 2801 2802 --yes
 1. Start the stack without pointing the public hostname at it yet.
 2. Stop new stickers on the old site, for example by renaming `insert.php`, so that none get lost after the export.
 3. Export the `locations` table with a header row, for example as CSV from phpMyAdmin. It needs the columns `id`, `latitude`, `longitude`, `name`, `date`, `city`, `state` and `country`.
-4. Import it. `--replace` deletes everything already in the sticker table, such as test data. An invalid row aborts the import and changes nothing.
+4. Check which time zone the old server saved the dates in, with `SELECT @@global.time_zone, @@system_time_zone;` in phpMyAdmin. `SYSTEM` means the second value.
+5. Import it. The import converts the dates from `Europe/Berlin` to UTC; pass another zone with `--source-timezone`. It also adds each sticker's time zone and turns the country names, which the old site saved in each visitor's language, into a code and the German name. It names any country it has no code for, which you can add to `LEGACY_COUNTRIES` in `src/places.py`. If you imported with a release before this conversion, import again with `--replace`, because those dates are still in the old server's time. `--replace` deletes everything already in the sticker table, such as test data. An invalid row aborts the import and changes nothing.
    ```sh
    docker compose run --rm -v "$PWD/locations.csv:/tmp/locations.csv:ro" \
      sticker-api python src/import_stickers.py /tmp/locations.csv --replace
    ```
-5. Compare the imported count with the old map, check the pages, and switch the site over.
-6. Remove the old `*.php` files and `credentials.txt` from the old server. Keep the MySQL database until you are sure you will not roll back.
+6. Compare the imported count with the old map, check the pages, and switch the site over.
+7. Remove the old `*.php` files and `credentials.txt` from the old server. Keep the MySQL database until you are sure you will not roll back.
 
 ## Development
 
