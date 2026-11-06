@@ -1,11 +1,11 @@
 """The filters that GET /stickers and every statistic share, and the SQL they need."""
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from enum import StrEnum
 from typing import Annotated
 
 from fastapi import Depends, Query
-from sqlalchemy import ColumnElement, String, any_, extract, func, or_
+from sqlalchemy import ColumnElement, Date, String, any_, cast, extract, func, or_
 from sqlalchemy.dialects.postgresql import ARRAY
 
 from sticker import MAX_NAME_LENGTH, PEOPLE_SEPARATOR, Sticker
@@ -27,8 +27,25 @@ def people(name=Sticker.name) -> ColumnElement:
     return func.array_remove(parts, "", type_=ARRAY(String))
 
 
-# The time on the clocks where the sticker was placed.
-local_time = func.timezone(Sticker.timezone, Sticker.date)
+def has_person(name: str) -> ColumnElement[bool]:
+    """Whether one of the people on the sticker is `name`, case-insensitively."""
+    return func.lower(name.strip()) == any_(people(func.lower(Sticker.name)))
+
+
+def local_time_of(sticker=Sticker) -> ColumnElement:
+    """The time on the clocks where the sticker was placed."""
+    return func.timezone(sticker.timezone, sticker.date)
+
+
+local_time = local_time_of()
+
+# The date on the clocks where the sticker was placed.
+local_day = cast(local_time, Date)
+
+
+def is_night(local: ColumnElement) -> ColumnElement[bool]:
+    hour = extract("hour", local)
+    return or_(hour >= NIGHT_STARTS, hour < NIGHT_ENDS)
 
 
 def as_utc(moment: datetime) -> datetime:
@@ -58,6 +75,14 @@ def sticker_filters(
     until: Annotated[
         datetime | None, Query(description="Placed before. In UTC without an offset.")
     ] = None,
+    since_day: Annotated[
+        date | None,
+        Query(description="Placed on or after this day, local where the sticker is."),
+    ] = None,
+    until_day: Annotated[
+        date | None,
+        Query(description="Placed before this day, local where the sticker is."),
+    ] = None,
     time_of_day: Annotated[
         TimeOfDay | None,
         Query(description="In local time where the sticker is. Night is 22 to 6."),
@@ -65,8 +90,7 @@ def sticker_filters(
 ) -> list[ColumnElement[bool]]:
     filters = []
     if name:
-        lowered = people(func.lower(Sticker.name))
-        filters.append(func.lower(name.strip()) == any_(lowered))
+        filters.append(has_person(name))
     if country:
         filters.append(Sticker.country_code == country.upper())
     if city:
@@ -75,9 +99,12 @@ def sticker_filters(
         filters.append(Sticker.date >= as_utc(since))
     if until:
         filters.append(Sticker.date < as_utc(until))
+    if since_day:
+        filters.append(local_day >= since_day)
+    if until_day:
+        filters.append(local_day < until_day)
     if time_of_day:
-        hour = extract("hour", local_time)
-        night = or_(hour >= NIGHT_STARTS, hour < NIGHT_ENDS)
+        night = is_night(local_time)
         filters.append(night if time_of_day == TimeOfDay.night else ~night)
     return filters
 

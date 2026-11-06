@@ -18,12 +18,16 @@ The browser reaches the API on the site's own origin below `/api`, so no CORS is
 | `GET /stickers` | Stickers newest first. Takes the filters below, `limit` (1-5000, default 100), `offset` and `format=json\|geojson`. |
 | `POST /stickers` | Adds a sticker and returns it with status 201. |
 | `GET /stats/summary` | The number of stickers, people, cities and countries. |
-| `GET /stats/counts?by=…` | Stickers per `person`, `country`, `city`, `month`, `weekday` or `hour`. Takes `limit`. |
+| `GET /stats/counts?by=…` | Stickers per `person`, `country`, `city`, `month`, `weekday`, `hour` or `day`. Takes `limit`. |
 | `GET /stats/farthest?latitude=…&longitude=…` | The stickers farthest from a place, with `distance_km`. Takes `limit` (1-100, default 10). |
+| `GET /stats/people` | For each person: stickers, countries, cities, stickers at night and at the weekend, `travelled_km` from each of their stickers to their next, and their first and last. With `latitude` and `longitude`, also their `farthest` sticker from there. |
+| `GET /stats/pairs` | The two people who share the most stickers, and the next ones. Takes `limit` (1-100, default 10). |
+| `GET /stats/records` | The `record_day` with the most stickers, the `longest_streak` of days in a row, the stickers farthest `north`, `south`, `east` and `west`, and the `home_share` within 25 km of Norderstedt. |
+| `GET /stats/latest` | The two newest stickers and the distance between them. Takes no filters. |
 | `GET /health` | 200 when the database is reachable, otherwise 503. |
 | `GET /docs` | Interactive documentation. |
 
-Every `GET /stickers` and `/stats` request takes the same filters:
+Every `GET /stickers` and `/stats` request except `/stats/latest` takes the same filters:
 
 | Filter | Matches |
 | --- | --- |
@@ -31,6 +35,7 @@ Every `GET /stickers` and `/stats` request takes the same filters:
 | `country` | The ISO 3166-1 alpha-2 code, like `DE`. |
 | `city` | The city, case-insensitively. |
 | `since`, `until` | Placed at or after `since` and before `until`. Times without an offset are in UTC. |
+| `since_day`, `until_day` | Placed on or after `since_day` and before `until_day`, dates like `2024-03-01` on the clocks where the sticker is. Use these for a month or a year, so that they match the local days and months of the statistics. |
 | `time_of_day` | `night` (22:00 to 5:59) or `day`, in local time where the sticker is. |
 
 For example, the people with the most stickers at night: `GET /stats/counts?by=person&time_of_day=night&limit=10`.
@@ -38,8 +43,9 @@ For example, the people with the most stickers at night: `GET /stats/counts?by=p
 - `X-Total-Count` on `GET /stickers` holds the number of matching stickers across all pages.
 - `POST /stickers` takes `latitude`, `longitude` and `name` (up to 75 characters, several people separated by `&`). The server adds `id`, `date`, the time zone of the place, and the address in German from [Nominatim](https://nominatim.org/), which gets the coordinates. If Nominatim fails or finds nothing, as at sea, the address stays empty. The request needs no login and is limited to 5 per minute and 50 per day for each client IP. There is no endpoint to delete stickers, see [Removing spam](#removing-spam).
 - Distances are along the globe, by the haversine formula on a sphere of the Earth's mean radius, at most 0.5 % off the exact distance.
+- A sticker of several people counts for each of them in `/stats/people` and `/stats/counts?by=person`, and once for someone on it twice, as in `Ana & ana`.
 - A sticker has `date` in UTC, `timezone` (an IANA name like `Europe/Berlin`), `city`, `state`, `country`, `country_code` and `people`, the names split at `&`.
-- `/stats/counts` lists people, countries and cities with the most stickers first, and times in their order: months as `2024-03`, weekdays from `1` for Monday to `7`, hours from `00` to `23`, all local where the sticker is. A `label` is the most common spelling of its `key`, like `Deutschland` for `DE`.
+- `/stats/counts` lists people, countries and cities with the most stickers first, and times in their order: months as `2024-03`, weekdays from `1` for Monday to `7`, hours from `00` to `23` and days as `2024-03-31`, all local where the sticker is. A `label` is the most common spelling of its `key`, like `Deutschland` for `DE`.
 
 ## Running it
 
