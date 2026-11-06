@@ -1,6 +1,6 @@
 [project]
 name = "hbg-fast-api"
-version = "0.3.0"
+version = "1.0.0"
 description = "API to add and view HBG stickers placed around the world"
 readme = "README.md"
 license = "MIT"
