@@ -122,6 +122,15 @@ docker compose exec sticker-api python src/delete_stickers.py --since "2026-11-0
 docker compose exec sticker-api python src/delete_stickers.py 2801 2802 --yes
 ```
 
+### Merging spellings of a person
+
+Names are free text, so one person can end up in the statistics twice, like `Collin` and `collin.`. Back up first. List what would change, then run the same command again with `--yes`. It renames the person wherever they are on a sticker, case-insensitively, and keeps everyone else: `Jan L & Collin` becomes `Jan L. & Collin`, while `Jan Lippert` stays.
+
+```sh
+docker compose exec sticker-api python src/rename_person.py "jan l" "Jan L."
+docker compose exec sticker-api python src/rename_person.py "jan l" "Jan L." --yes
+```
+
 ### Moving from the old MySQL site
 
 1. Start the stack without pointing the public hostname at it yet.
