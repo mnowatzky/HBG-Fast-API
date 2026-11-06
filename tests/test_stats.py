@@ -1,6 +1,7 @@
 from datetime import UTC, datetime
 
 import pytest
+from geographiclib.geodesic import Geodesic
 
 from sticker import Sticker
 
@@ -126,7 +127,7 @@ def test_farthest_comes_first_with_its_distance(client, session):
 
     assert [(s["name"], s["distance_km"]) for s in response.json()] == [
         ("antipode", 20015.1),
-        ("middle", 10007.5),
+        ("middle", 10007.6),
     ]
     assert response.json()[0]["people"] == ["antipode"]
 
@@ -153,3 +154,50 @@ def test_farthest_takes_the_filters(client, session):
 )
 def test_farthest_needs_a_valid_place(client, params):
     assert client.get("/stats/farthest", params=params).status_code == 422
+
+
+NORDERSTEDT = {"latitude": 53.67549805330424, "longitude": 9.980945457552263}
+
+# On the equator, a degree of longitude is 111.2 km.
+DEGREE_KM = 111.2
+
+
+@pytest.mark.parametrize(
+    ("place", "latitude", "longitude"),
+    [
+        ("next street", 53.712214, 10.0187034),
+        ("Tromsø", 69.6524868, 18.9588202),
+        ("Kanazawa", 36.5571747, 136.6452179),
+        ("Nanaimo", 49.1659709, -123.9389489),
+        ("Oakura", -39.100663, 173.977806),
+        ("almost the antipode", -53.6, -170.1),
+    ],
+)
+def test_distances_are_on_the_globe(client, session, place, latitude, longitude):
+    """Within 0.5 % of the ellipsoid that GPS uses, which a sphere can't beat."""
+    add(session, place, latitude=latitude, longitude=longitude)
+    exact = Geodesic.WGS84.Inverse(
+        NORDERSTEDT["latitude"], NORDERSTEDT["longitude"], latitude, longitude
+    )["s12"]
+
+    [farthest] = client.get("/stats/farthest", params=NORDERSTEDT).json()
+
+    assert farthest["distance_km"] == pytest.approx(exact / 1000, rel=0.005)
+
+
+@pytest.mark.parametrize(
+    ("first", "second", "km"),
+    [
+        # Across the date line, not around the world
+        ((0, 179.5), (0, -179.5), DEGREE_KM),
+        # Across the North Pole
+        ((89.9, 0), (89.9, 180), DEGREE_KM / 5),
+    ],
+)
+def test_distances_take_the_short_way(client, session, first, second, km):
+    add(session, "Malte", latitude=second[0], longitude=second[1])
+    place = {"latitude": first[0], "longitude": first[1]}
+
+    [farthest] = client.get("/stats/farthest", params=place).json()
+
+    assert farthest["distance_km"] == pytest.approx(km, abs=0.1)

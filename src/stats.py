@@ -1,10 +1,10 @@
 """Statistics, computed in the database. Each takes the filters of GET /stickers."""
 
 from enum import StrEnum
-from typing import Annotated
+from typing import Annotated, NamedTuple
 
-from fastapi import APIRouter, Query
-from sqlalchemy import ColumnElement, Select, Subquery, distinct, func, select
+from fastapi import APIRouter, Depends, Query
+from sqlalchemy import ColumnElement, Select, Subquery, case, distinct, func, select
 from sqlmodel import SQLModel, col
 
 from db import SessionDep
@@ -13,7 +13,29 @@ from sticker import Sticker, StickerPublic
 
 router = APIRouter(prefix="/stats", tags=["stats"])
 
-EARTH_RADIUS_KM = 6371.0
+# The mean radius of the Earth. A sphere with it is at most 0.5 % off the
+# ellipsoid of WGS84, which GPS uses.
+EARTH_RADIUS_KM = 6371.0088
+
+# A number, or a column for one in SQL
+Coordinate = float | ColumnElement[float]
+
+
+class Place(NamedTuple):
+    latitude: Coordinate
+    longitude: Coordinate
+
+
+def place_of(sticker=Sticker) -> Place:
+    return Place(sticker.latitude, sticker.longitude)
+
+
+Latitude = Annotated[float, Query(ge=-90, le=90)]
+Longitude = Annotated[float, Query(ge=-180, le=180)]
+
+
+def place_query(latitude: Latitude, longitude: Longitude) -> Place:
+    return Place(latitude, longitude)
 
 
 class Summary(SQLModel):
@@ -117,26 +139,36 @@ def read_counts(
     return [Count(key=key, label=label, count=n) for key, label, n in rows]
 
 
-def distance_km(latitude: float, longitude: float):
-    """The great-circle distance of each sticker from the place, by haversine."""
-    half_lat = func.radians(Sticker.latitude - latitude) / 2
-    half_lon = func.radians(Sticker.longitude - longitude) / 2
-    a = func.power(func.sin(half_lat), 2) + func.cos(func.radians(latitude)) * func.cos(
-        func.radians(Sticker.latitude)
-    ) * func.power(func.sin(half_lon), 2)
-    return 2 * EARTH_RADIUS_KM * func.asin(func.least(1, func.sqrt(a)))
+def great_circle_km(start: Place, end: Place) -> ColumnElement[float]:
+    """The distance between two places on the globe, by haversine.
+
+    Every distance in the statistics comes from here.
+    """
+    half_lat = func.radians(end.latitude - start.latitude) / 2
+    half_lon = func.radians(end.longitude - start.longitude) / 2
+    a = func.power(func.sin(half_lat), 2) + func.cos(
+        func.radians(start.latitude)
+    ) * func.cos(func.radians(end.latitude)) * func.power(func.sin(half_lon), 2)
+    # Rounding can push it past 1 near the antipode. Not LEAST(1, …): it skips NULL,
+    # which would make a missing place half the globe away.
+    root = func.sqrt(a)
+    return 2 * EARTH_RADIUS_KM * func.asin(case((root > 1, 1), else_=root))
+
+
+def distance_km(place: Place) -> ColumnElement[float]:
+    """The distance of each sticker from the place."""
+    return great_circle_km(place, place_of())
 
 
 @router.get("/farthest", response_model=list[StickerDistance])
 def read_farthest(
     session: SessionDep,
     filters: FiltersDep,
-    latitude: Annotated[float, Query(ge=-90, le=90)],
-    longitude: Annotated[float, Query(ge=-180, le=180)],
+    place: Annotated[Place, Depends(place_query)],
     limit: Annotated[int, Query(ge=1, le=100)] = 10,
 ):
     """The stickers farthest from a place, farthest first."""
-    distance = distance_km(latitude, longitude).label("distance")
+    distance = distance_km(place).label("distance")
     rows = session.execute(
         select(Sticker, distance)
         .where(*filters)

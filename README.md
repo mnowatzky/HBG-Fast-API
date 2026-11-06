@@ -37,6 +37,7 @@ For example, the people with the most stickers at night: `GET /stats/counts?by=p
 
 - `X-Total-Count` on `GET /stickers` holds the number of matching stickers across all pages.
 - `POST /stickers` takes `latitude`, `longitude` and `name` (up to 75 characters, several people separated by `&`). The server adds `id`, `date`, the time zone of the place, and the address in German from [Nominatim](https://nominatim.org/), which gets the coordinates. If Nominatim fails or finds nothing, as at sea, the address stays empty. The request needs no login and is limited to 5 per minute and 50 per day for each client IP. There is no endpoint to delete stickers, see [Removing spam](#removing-spam).
+- Distances are along the globe, by the haversine formula on a sphere of the Earth's mean radius, at most 0.5 % off the exact distance.
 - A sticker has `date` in UTC, `timezone` (an IANA name like `Europe/Berlin`), `city`, `state`, `country`, `country_code` and `people`, the names split at `&`.
 - `/stats/counts` lists people, countries and cities with the most stickers first, and times in their order: months as `2024-03`, weekdays from `1` for Monday to `7`, hours from `00` to `23`, all local where the sticker is. A `label` is the most common spelling of its `key`, like `Deutschland` for `DE`.
 
