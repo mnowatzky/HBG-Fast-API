@@ -68,7 +68,7 @@ curl http://127.0.0.1:8080/api/health
 
 Point a proxy host for your domain at `hbg-frontend:80` and enable TLS there. The proxy must add the client's address to `X-Forwarded-For`, or all visitors share one rate limit. Turn off its access log, as the frontend's privacy policy (`/datenschutz`) says no visit is logged; in Nginx Proxy Manager, put `access_log off;` in the proxy host's Advanced tab.
 
-Migrations run when the API starts. Only the frontend publishes a port, on `127.0.0.1:8080`, for checks through an SSH tunnel.
+Migrations run when the API starts. Two ports are published, on loopback only, for use through an SSH tunnel: the frontend on `127.0.0.1:8080` for checks, and the database on `127.0.0.1:15432` for a client such as DBeaver (in DBeaver, host `localhost`, port `15432`, the `STICKER_DB_*` credentials, and the server in the SSH tab).
 
 ### Configuration
 

@@ -1,6 +1,8 @@
 # Production. TLS and routing are handled by your reverse proxy, which reaches the
 # frontend as hbg-frontend:80 over a shared external Docker network.
-# Only the frontend publishes a port, on loopback, for checks through an SSH tunnel.
+# The frontend and the database publish a port each, on loopback only, for checks and
+# maintenance through an SSH tunnel. Docker-published ports bypass a host firewall such
+# as UFW, so never bind them to all interfaces.
 name: stickers
 
 # Caps each container's log at about 30 MB; recreating a container on deploy drops its log.
@@ -25,8 +27,15 @@ services:
       POSTGRES_DB: ${STICKER_DB_NAME:?set STICKER_DB_NAME}
     volumes:
       - ./data:/var/lib/postgresql/data
+    # For a database client such as DBeaver through an SSH tunnel.
+    ports:
+      - "127.0.0.1:15432:5432"
     networks:
       - db
+      # Docker sets up no published port for a container that is only on internal
+      # networks, so the port needs this one. Not "app", so the frontend can't reach
+      # the database.
+      - db-admin
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
       interval: 5s
@@ -67,6 +76,7 @@ services:
 networks:
   db:
     internal: true
+  db-admin: {}
   app: {}
   proxy:
     external: true
