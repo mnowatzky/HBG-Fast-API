@@ -2,7 +2,15 @@ import logging
 from enum import StrEnum
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, Query, Request, Response, status
+from fastapi import (
+    BackgroundTasks,
+    Depends,
+    FastAPI,
+    Query,
+    Request,
+    Response,
+    status,
+)
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
@@ -10,15 +18,15 @@ from geojson import FeatureCollection
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
-from sqlalchemy import func
+from sqlalchemy import func, update
 from sqlalchemy.exc import OperationalError
-from sqlmodel import col, select
+from sqlmodel import Session, col, select
 
 import stats
 from config import config
-from db import SessionDep
+from db import SessionDep, engine
 from filters import FiltersDep
-from geocode import Nominatim, get_geocoder
+from geocode import Address, Nominatim, get_geocoder
 from places import known_timezones, timezone_at
 from sticker import Sticker, StickerCreate, StickerPublic
 
@@ -103,6 +111,22 @@ def read_stickers(
     return stickers
 
 
+def add_address(
+    sticker_id: int, latitude: float, longitude: float, geocoder: Nominatim
+) -> None:
+    """Looks up the address after the response, so saving does not wait for it."""
+    address = geocoder.reverse(latitude, longitude)
+    if address == Address():
+        return
+    with Session(engine) as session:
+        session.execute(
+            update(Sticker)
+            .where(col(Sticker.id) == sticker_id)
+            .values(**address.model_dump())
+        )
+        session.commit()
+
+
 @app.post(
     "/stickers", status_code=status.HTTP_201_CREATED, response_model=StickerPublic
 )
@@ -112,14 +136,17 @@ def create_sticker(
     sticker: StickerCreate,
     session: SessionDep,
     geocoder: Annotated[Nominatim, Depends(get_geocoder)],
+    background_tasks: BackgroundTasks,
 ):
-    """Saves a sticker. The server adds the date, the address and the time zone."""
-    address = geocoder.reverse(sticker.latitude, sticker.longitude)
+    """Saves a sticker. The server adds the date and the time zone, and the address
+    right after it answers, so the response has no address yet."""
     zone = timezone_at(sticker.latitude, sticker.longitude, known_timezones(session))
-    db_sticker = Sticker.model_validate(
-        sticker, update={**address.model_dump(), "timezone": zone}
-    )
+    db_sticker = Sticker.model_validate(sticker, update={"timezone": zone})
     session.add(db_sticker)
     session.commit()
     session.refresh(db_sticker)
+    assert db_sticker.id is not None
+    background_tasks.add_task(
+        add_address, db_sticker.id, sticker.latitude, sticker.longitude, geocoder
+    )
     return db_sticker

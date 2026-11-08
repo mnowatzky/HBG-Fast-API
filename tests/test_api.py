@@ -44,24 +44,37 @@ def test_create_returns_the_stored_sticker(client):
     assert datetime.fromisoformat(body["date"]).year >= 2026
 
 
+def stored(client):
+    return client.get("/stickers").json()[0]
+
+
+def test_create_answers_before_the_address_is_known(client):
+    body = client.post("/stickers", json=HAMBURG).json()
+
+    assert body["city"] == ""
+    assert body["country_code"] == ""
+
+
 def test_create_adds_the_address_and_the_time_zone_of_the_place(client, geocoder):
     body = client.post(
         "/stickers", json={"latitude": 13.75, "longitude": 100.5, "name": "Timo"}
     ).json()
 
-    assert geocoder.places == [(13.75, 100.5)]
-    assert body["city"] == "Hamburg"
-    assert body["country_code"] == "DE"
     assert body["timezone"] == "Asia/Bangkok"
+    # The test client runs the background lookup before it returns.
+    assert geocoder.places == [(13.75, 100.5)]
+    sticker = stored(client)
+    assert sticker["city"] == "Hamburg"
+    assert sticker["country_code"] == "DE"
+    assert sticker["timezone"] == "Asia/Bangkok"
 
 
 def test_create_ignores_a_client_supplied_address(client):
-    body = client.post(
-        "/stickers", json={**HAMBURG, "city": "Atlantis", "country": "Germany"}
-    ).json()
+    client.post("/stickers", json={**HAMBURG, "city": "Atlantis", "country": "Germany"})
 
-    assert body["city"] == "Hamburg"
-    assert body["country"] == "Deutschland"
+    sticker = stored(client)
+    assert sticker["city"] == "Hamburg"
+    assert sticker["country"] == "Deutschland"
 
 
 def test_create_ignores_a_client_supplied_date_and_id(client):
@@ -81,8 +94,8 @@ def test_create_saves_a_sticker_without_an_address(client, geocoder):
     )
 
     assert response.status_code == 201
-    assert response.json()["country"] == ""
-    assert response.json()["timezone"] == "Etc/GMT+2"
+    assert stored(client)["country"] == ""
+    assert stored(client)["timezone"] == "Etc/GMT+2"
 
 
 def test_create_trims_the_name(client):
