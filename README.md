@@ -20,6 +20,7 @@ The browser reaches the API on the site's own origin below `/api`, so no CORS is
 | `GET /stats/summary` | The number of stickers, people, cities and countries. |
 | `GET /stats/counts?by=…` | Stickers per `person`, `country`, `city`, `month`, `weekday`, `hour` or `day`. Takes `limit`. |
 | `GET /stats/farthest?latitude=…&longitude=…` | The stickers farthest from a place, with `distance_km`. Takes `limit` (1-100, default 10). |
+| `GET /stats/isolated` | The stickers farthest from their nearest other sticker, with `distance_km` to it and that `nearest` sticker. Only the filtered stickers count as neighbours. Takes `limit` (1-100, default 10). |
 | `GET /stats/people` | For each person: stickers, countries, cities, stickers at night and at the weekend, `travelled_km` from each of their stickers to their next, and their first and last. With `latitude` and `longitude`, also their `farthest` sticker from there. |
 | `GET /stats/pairs` | The two people who share the most stickers, and the next ones. Takes `limit` (1-100, default 10). |
 | `GET /stats/records` | The `record_day` with the most stickers, the `longest_streak` of days in a row, the stickers farthest `north`, `south`, `east` and `west`, and the `home_share` within 25 km of Norderstedt. |

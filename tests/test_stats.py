@@ -1,9 +1,11 @@
+import math
+import random
 from datetime import UTC, datetime
 
 import pytest
 from geographiclib.geodesic import Geodesic
 
-from stats import HOME
+from stats import EARTH_RADIUS_KM, HOME, nearest_neighbours
 from sticker import Sticker
 
 
@@ -452,3 +454,130 @@ def test_distances_take_the_short_way(client, session, first, second, km):
     [farthest] = client.get("/stats/farthest", params=place).json()
 
     assert farthest["distance_km"] == pytest.approx(km, abs=0.1)
+
+
+def isolated(client, **params):
+    response = client.get("/stats/isolated", params=params)
+    assert response.status_code == 200
+    return [
+        (s["name"], s["distance_km"], s["nearest"]["name"]) for s in response.json()
+    ]
+
+
+def test_isolated_are_farthest_from_their_nearest_sticker(client, session):
+    for name, longitude in [("zero", 0), ("one", 1), ("three", 3), ("ten", 10)]:
+        add(session, name, latitude=0, longitude=longitude)
+
+    assert isolated(client) == [
+        ("ten", round(7 * DEGREE_KM, 1), "three"),
+        ("three", round(2 * DEGREE_KM, 1), "one"),
+        # Each other's nearest, with the same distance: the newer id first
+        ("one", DEGREE_KM, "zero"),
+        ("zero", DEGREE_KM, "one"),
+    ]
+    assert isolated(client, limit=1) == [("ten", round(7 * DEGREE_KM, 1), "three")]
+
+
+def test_isolated_count_only_the_filtered_stickers_as_neighbours(client, session):
+    add(session, "Lisa", latitude=0, longitude=0)
+    add(session, "Timo", latitude=0, longitude=1)
+    add(session, "Lisa", latitude=0, longitude=5)
+
+    assert isolated(client, name="lisa") == [
+        ("Lisa", round(5 * DEGREE_KM, 1), "Lisa"),
+        ("Lisa", round(5 * DEGREE_KM, 1), "Lisa"),
+    ]
+
+
+def test_isolated_need_two_stickers(client, session):
+    assert isolated(client) == []
+    add(session, "alone")
+    assert isolated(client) == []
+
+
+def test_isolated_at_the_same_place_are_0_km_apart(client, session):
+    add(session, "Lisa")
+    add(session, "Timo")
+
+    assert isolated(client) == [("Timo", 0, "Lisa"), ("Lisa", 0, "Timo")]
+
+
+def test_isolated_have_the_sticker_fields(client, session):
+    add(session, "Lisa & Timo", city="Oakura", country="Neuseeland")
+    add(session, "Ana", latitude=3)
+
+    # Equally far, so the newer first
+    [_, oakura] = client.get("/stats/isolated").json()
+
+    assert oakura["people"] == ["Lisa", "Timo"]
+    assert oakura["city"] == "Oakura"
+    assert oakura["country"] == "Neuseeland"
+    assert oakura["nearest"]["people"] == ["Ana"]
+
+
+@pytest.mark.parametrize("limit", [0, 101])
+def test_isolated_need_a_valid_limit(client, limit):
+    assert client.get("/stats/isolated", params={"limit": limit}).status_code == 422
+
+
+@pytest.mark.parametrize(
+    ("first", "second", "km"),
+    [
+        ((0, 179.5), (0, -179.5), DEGREE_KM),
+        ((89.9, 0), (89.9, 180), DEGREE_KM / 5),
+    ],
+)
+def test_isolated_take_the_short_way(client, session, first, second, km):
+    add(session, "Malte", latitude=first[0], longitude=first[1])
+    add(session, "Timo", latitude=second[0], longitude=second[1])
+
+    [(_, distance, _), _] = isolated(client)
+
+    assert distance == pytest.approx(km, abs=0.1)
+
+
+def test_isolated_are_on_the_globe(client, session):
+    add(session, "Norderstedt", **NORDERSTEDT)
+    add(session, "Oakura", latitude=-39.100663, longitude=173.977806)
+    exact = Geodesic.WGS84.Inverse(
+        NORDERSTEDT["latitude"], NORDERSTEDT["longitude"], -39.100663, 173.977806
+    )["s12"]
+
+    [(_, distance, _), _] = isolated(client)
+
+    assert distance == pytest.approx(exact / 1000, rel=0.005)
+
+
+def haversine_km(a, b):
+    lat1, lon1, lat2, lon2 = map(math.radians, (*a, *b))
+    h = (
+        math.sin((lat2 - lat1) / 2) ** 2
+        + math.cos(lat1) * math.cos(lat2) * math.sin((lon2 - lon1) / 2) ** 2
+    )
+    return 2 * EARTH_RADIUS_KM * math.asin(min(1, math.sqrt(h)))
+
+
+@pytest.mark.parametrize("seed", range(5))
+def test_nearest_neighbours_are_those_of_all_against_all(seed):
+    """Spread over the globe, with clusters, the poles and the date line."""
+    rng = random.Random(seed)
+    places = [(rng.uniform(-90, 90), rng.uniform(-180, 180)) for _ in range(150)]
+    places += [(53.6 + rng.gauss(0, 0.05), 10 + rng.gauss(0, 0.1)) for _ in range(150)]
+    places += [(rng.choice([-89.99, 89.99]), rng.uniform(-180, 180)) for _ in range(10)]
+    places += [(rng.uniform(-1, 1), rng.choice([-179.99, 179.99])) for _ in range(10)]
+    points = [(id_, lat, lon) for id_, (lat, lon) in enumerate(places)]
+
+    nearest = nearest_neighbours(points)
+
+    for id_, place in enumerate(places):
+        expected = min(
+            haversine_km(place, other) for j, other in enumerate(places) if j != id_
+        )
+        km, other = nearest[id_]
+        assert km == pytest.approx(expected, abs=1e-6)
+        assert haversine_km(place, places[other]) == pytest.approx(expected, abs=1e-6)
+
+
+def test_nearest_neighbours_of_one_or_none_are_none():
+    assert nearest_neighbours([]) == {}
+    assert nearest_neighbours([(1, 0, 0)]) == {}
