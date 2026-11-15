@@ -1,6 +1,11 @@
-"""Statistics computed in the database, all but /latest with the filters of /stickers."""
+"""Statistics, all but /latest with the filters of /stickers.
+
+The database computes them, except the nearest neighbours of /isolated.
+"""
 
 import datetime as dt
+import math
+from collections.abc import Iterable
 from enum import StrEnum
 from typing import Annotated, NamedTuple
 
@@ -100,6 +105,12 @@ class StickerDistance(StickerPublic):
     distance_km: float
 
 
+class IsolatedSticker(StickerDistance):
+    """A sticker with the distance to its nearest other sticker, and that one."""
+
+    nearest: StickerPublic
+
+
 class PersonStats(SQLModel):
     key: str
     label: str
@@ -160,7 +171,8 @@ class Latest(SQLModel):
 def great_circle_km(start: Place, end: Place) -> ColumnElement[float]:
     """The distance between two places on the globe, by haversine.
 
-    Every distance in the statistics comes from here.
+    Every distance in the statistics comes from here, but those that
+    nearest_neighbours() measures in Python, the same way.
     """
     half_lat = func.radians(end.latitude - start.latitude) / 2
     half_lon = func.radians(end.longitude - start.longitude) / 2
@@ -291,6 +303,81 @@ def read_farthest(
         .limit(limit)
     )
     return [with_distance(sticker, km) for sticker, km in rows]
+
+
+def nearest_neighbours(
+    points: Iterable[tuple[int, float, float]],
+) -> dict[int, tuple[float, int]]:
+    """Each point's nearest other point on the globe, as (km, its id), by id.
+
+    Points are (id, latitude, longitude). The straight line through the globe
+    between two places, the chord, grows with the distance along the globe, so the
+    nearest by chord is the nearest on the globe, and 2R·asin(chord/2) is the same
+    distance as haversine's. No place is nearer than the difference in latitude, so
+    with the points in order of latitude, the search from each one stops once the
+    latitude alone is farther than the nearest found. That takes milliseconds for
+    thousands of stickers, where comparing all with all takes a second. A single
+    point has no neighbour and is left out.
+    """
+    order = sorted(
+        (math.radians(lat), math.radians(lon), id_) for id_, lat, lon in points
+    )
+    unit = [
+        (math.cos(lat) * math.cos(lon), math.cos(lat) * math.sin(lon), math.sin(lat))
+        for lat, lon, _ in order
+    ]
+    nearest = {}
+    for here, (latitude, _, id_) in enumerate(order):
+        x, y, z = unit[here]
+        # Squared chords. 4 is the antipode, so 5 is farther than any.
+        best, best_id = 5.0, None
+        for step in (1, -1):
+            there = here + step
+            while 0 <= there < len(order):
+                bound = 2 * math.sin(abs(order[there][0] - latitude) / 2)
+                if bound * bound >= best:
+                    break
+                u, v, w = unit[there]
+                chord = (x - u) ** 2 + (y - v) ** 2 + (z - w) ** 2
+                if chord < best:
+                    best, best_id = chord, order[there][2]
+                there += step
+        if best_id is not None:
+            km = 2 * EARTH_RADIUS_KM * math.asin(min(1.0, math.sqrt(best) / 2))
+            nearest[id_] = (km, best_id)
+    return nearest
+
+
+@router.get("/isolated", response_model=list[IsolatedSticker])
+def read_isolated(
+    session: SessionDep,
+    filters: FiltersDep,
+    limit: Annotated[int, Query(ge=1, le=100)] = 10,
+):
+    """The stickers farthest from their nearest other sticker, farthest first.
+
+    Only the filtered stickers count, as neighbours too, so with fewer than two the
+    list is empty. Two stickers alone far away are each other's nearest, and both
+    come with the same distance.
+    """
+    points = session.execute(
+        select(Sticker.id, Sticker.latitude, Sticker.longitude).where(*filters)
+    ).all()
+    nearest = nearest_neighbours(points)
+    top = sorted(nearest.items(), key=lambda item: (-item[1][0], -item[0]))[:limit]
+    ids = {id_ for id_, _ in top} | {other for _, (_, other) in top}
+    stickers = {
+        sticker.id: sticker
+        for sticker in session.scalars(select(Sticker).where(col(Sticker.id).in_(ids)))
+    }
+    return [
+        IsolatedSticker(
+            **stickers[id_].model_dump(),
+            distance_km=round(km, 1),
+            nearest=StickerPublic.model_validate(stickers[other]),
+        )
+        for id_, (km, other) in top
+    ]
 
 
 def legs(filters: list[ColumnElement[bool]]) -> Subquery:
